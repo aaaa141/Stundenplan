@@ -30,14 +30,22 @@ def require(v, name):
 
 def untis_login(s):
     url = f"https://{UNTIS_SERVER}/WebUntis/jsonrpc.do?school={UNTIS_SCHOOL}"
-    resp = s.post(url, json={
-        "id": "id", "method": "authenticate", "jsonrpc": "2.0",
+    headers = {"Content-Type": "application/json", "User-Agent": "untis-icloud-sync/1.0"}
+    payload = {
+        "id": "id",
+        "method": "authenticate",
+        "jsonrpc": "2.0",
         "params": {"user": UNTIS_USER, "password": UNTIS_PASS, "client": "untis-icloud-sync"}
-    })
+    }
+    resp = s.post(url, json=payload, headers=headers)
     resp.raise_for_status()
-    data = resp.json()
+    # Debug-Ausgabe, falls JSON nicht wie erwartet ist
+    try:
+        data = resp.json()
+    except Exception:
+        raise RuntimeError(f"Untis-Login: Keine gültige JSON-Antwort: {resp.text[:500]}")
     if "result" not in data:
-        # Mehr Debug-Ausgabe, damit wir sehen, was Untis sagt
+        # Hier kommt jetzt die echte Fehlermeldung raus
         raise RuntimeError(f"Untis-Login fehlgeschlagen: {data.get('error') or data}")
     sid = data["result"]["sessionId"]
     s.headers.update({"Cookie": f"JSESSIONID={sid}; schoolname={UNTIS_SCHOOL}"})
