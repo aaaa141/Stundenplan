@@ -31,7 +31,7 @@ def require_env(name: str):
         print(f"[FEHLT] {name} ist nicht gesetzt (Secret).")
         sys.exit(2)
 
-def ymd(d): 
+def ymd(d):
     return int(d.strftime("%Y%m%d"))
 
 def to_local(date_int, time_int):
@@ -62,16 +62,28 @@ def untis_login(s: requests.Session):
         "jsonrpc": "2.0",
         "params": {"user": UNTIS_USER, "password": UNTIS_PASS, "client": "untis-icloud-sync"}
     }
-    resp = s.post(url, json=payload, headers=headers)
-    resp.raise_for_status()
-    # parse & bessere Fehlermeldungen
+    print(f"[DEBUG] login URL: {url}")
+    try:
+        resp = s.post(url, json=payload, headers=headers, timeout=20)
+    except requests.RequestException as e:
+        raise RuntimeError(f"Untis-Login: HTTP Request fehlgeschlagen: {e}")
+
+    # HTTP-Fehler direkt ausgeben
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Untis-Login: HTTP {resp.status_code}: {resp.text[:800]}")
+
+    # Versuche JSON zu parsen
     try:
         data = resp.json()
-    except Exception:
-        raise RuntimeError(f"Untis-Login: Keine gültige JSON-Antwort: {resp.text[:500]}")
+    except ValueError:
+        # keine gültige JSON-Antwort
+        body = resp.text[:800]
+        raise RuntimeError(f"Untis-Login: Ungültige JSON-Antwort (HTTP {resp.status_code}): {body}")
+
+    # Erwartetes Feld 'result' fehlt -> Fehlerobjekt zeigen
     if "result" not in data:
-        # jetzt sehen wir die echte Ursache (z.B. invalid credentials, school not found …)
-        raise RuntimeError(f"Untis-Login fehlgeschlagen: {data.get('error') or data}")
+        raise RuntimeError(f"Untis-Login fehlgeschlagen: {data}")
+
     sid = data["result"]["sessionId"]
     s.headers.update({"Cookie": f"JSESSIONID={sid}; schoolname={UNTIS_SCHOOL}"})
     return url
@@ -152,7 +164,7 @@ def main():
     for n in ["UNTIS_SERVER","UNTIS_SCHOOL","UNTIS_USER","UNTIS_PASS","ICLOUD_USER","ICLOUD_PASS"]:
         require_env(n)
 
-    # Debug-Ausgabe, damit wir sicher sehen, was verwendet wird
+    # Debug-Ausgabe (ohne Passwörter!)
     print(f"[DEBUG] using server='{UNTIS_SERVER}', school='{UNTIS_SCHOOL}'")
 
     s = requests.Session()
