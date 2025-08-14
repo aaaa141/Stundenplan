@@ -44,6 +44,29 @@ def labels(item,key):
 
 def uid_for(lesson): return f"untis-{lesson.get('id')}@{UNTIS_SERVER}"
 
+def untis_rpc(s: requests.Session, url: str, method: str, params: dict):
+    """JSON‑RPC Call mit Fallbacks auf Legacy-Methoden."""
+    payload = {"id":"id","method":method,"jsonrpc":"2.0","params":params or {}}
+    r = s.post(url, json=payload, timeout=25)
+    if r.status_code >= 400:
+        raise RuntimeError(f"{method}: HTTP {r.status_code}: {r.text[:800]}")
+    try:
+        data = r.json()
+    except ValueError:
+        raise RuntimeError(f"{method}: Ungültige JSON-Antwort: {r.text[:800]}")
+
+    # Fallbacks auf ältere Methodennamen
+    if "error" in data and isinstance(data["error"], dict) and data["error"].get("code") == -32601:
+        # Method not found → auf Legacy ausweichen
+        if method == "getUserData":
+            return untis_rpc(s, url, "getUserData2017", params)
+        if method == "getTimetable":
+            return untis_rpc(s, url, "getTimetable2017", params)
+
+    if "result" not in data:
+        raise RuntimeError(f"{method} fehlgeschlagen: {data}")
+    return data["result"]
+
 def untis_login(s: requests.Session):
     base = f"https://{UNTIS_SERVER}/WebUntis"
     url  = f"{base}/jsonrpc.do?school={UNTIS_SCHOOL}"
@@ -53,66 +76,25 @@ def untis_login(s: requests.Session):
         "Origin": base,
         "Referer": f"{base}/?school={UNTIS_SCHOOL}#/basic/login"
     }
-    payload = {
-        "id": "id",
-        "method": "authenticate",
-        "jsonrpc": "2.0",
-        "params": {"user": UNTIS_USER, "password": UNTIS_PASS, "client": "untis-icloud-sync"}
-    }
-    print(f"[DEBUG] login URL: {url}")
-    try:
-        resp = s.post(url, json=payload, headers=headers, timeout=25)
-    except requests.RequestException as e:
-        raise RuntimeError(f"Untis-Login: HTTP Request fehlgeschlagen: {e}")
-
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Untis-Login: HTTP {resp.status_code}: {resp.text[:800]}")
-
-    try:
-        data = resp.json()
-    except ValueError:
-        raise RuntimeError(f"Untis-Login: Ungültige JSON-Antwort (HTTP {resp.status_code}): {resp.text[:800]}")
-
-    if "result" not in data:
-        raise RuntimeError(f"Untis-Login fehlgeschlagen: {data}")
-
-    sid = data["result"]["sessionId"]
-
-    # >>> WICHTIG: Cookies korrekt ins Session-Cookie-Store setzen
+    s.headers.update(headers)
+    print(f"[DEBUG] using server='{UNTIS_SERVER}', school='{UNTIS_SCHOOL}'")
+    print(f"[INFO] Login bei WebUntis …")
+    # authenticate
+    result = untis_rpc(s, url, "authenticate",
+                       {"user": UNTIS_USER, "password": UNTIS_PASS, "client": "untis-icloud-sync"})
+    sid = result["sessionId"]
+    # Cookies korrekt setzen
     s.cookies.set("JSESSIONID", sid, domain=UNTIS_SERVER, path="/")
     s.cookies.set("schoolname", UNTIS_SCHOOL, domain=UNTIS_SERVER, path="/")
-
-    # Zusatz-Header schaden nicht
-    s.headers.update({
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": base,
-        "Referer": f"{base}/?school={UNTIS_SCHOOL}#/"
-    })
-    return f"{base}/jsonrpc.do?school={UNTIS_SCHOOL}"
+    return url
 
 def untis_user(s, url):
-    r = s.post(url, json={"id":"id","method":"getUserData","jsonrpc":"2.0","params":{}})
-    if r.status_code >= 400:
-        raise RuntimeError(f"getUserData: HTTP {r.status_code}: {r.text[:800]}")
-    try:
-        data = r.json()
-    except ValueError:
-        raise RuntimeError(f"getUserData: Ungültige JSON-Antwort: {r.text[:800]}")
-    if "result" not in data:
-        raise RuntimeError(f"getUserData fehlgeschlagen: {data}")
-    return data["result"]
+    return untis_rpc(s, url, "getUserData", {})
 
 def fetch_tt(s, url, pid, ptype, st, en):
-    r = s.post(url, json={"id":"id","method":"getTimetable","jsonrpc":"2.0",
-                          "params":{"options":{"element":{"id":pid,"type":ptype},
-                                               "startDate":st,"endDate":en,
-                                               "showStudentgroup": True}}})
-    if r.status_code >= 400:
-        raise RuntimeError(f"getTimetable: HTTP {r.status_code}: {r.text[:800]}")
-    data = r.json()
-    if "result" not in data:
-        raise RuntimeError(f"getTimetable fehlgeschlagen: {data}")
-    return data["result"]
+    params = {"options":{"element":{"id":pid,"type":ptype},
+                         "startDate":st,"endDate":en,"showStudentgroup": True}}
+    return untis_rpc(s, url, "getTimetable", params)
 
 def connect_caldav():
     c = DAVClient(url="https://caldav.icloud.com/", username=ICLOUD_USER, password=ICLOUD_PASS)
@@ -162,14 +144,10 @@ def main():
     for n in ["UNTIS_SERVER","UNTIS_SCHOOL","UNTIS_USER","UNTIS_PASS","ICLOUD_USER","ICLOUD_PASS"]:
         require_env(n)
 
-    print(f"[DEBUG] using server='{UNTIS_SERVER}', school='{UNTIS_SCHOOL}'")
-
     s = requests.Session()
     s.headers.update({"Content-Type":"application/json"})
 
-    print("[INFO] Login bei WebUntis …")
     url = untis_login(s)
-
     ud = untis_user(s, url)
     pid, ptype = ud["personId"], ud["personType"]
 
