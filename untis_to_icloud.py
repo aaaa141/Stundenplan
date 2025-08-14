@@ -29,12 +29,18 @@ def require(v, name):
         sys.exit(2)
 
 def untis_login(s):
-    url=f"https://{UNTIS_SERVER}/WebUntis/jsonrpc.do?school={UNTIS_SCHOOL}"
-    r=s.post(url,json={"id":"id","method":"authenticate","jsonrpc":"2.0",
-                       "params":{"user":UNTIS_USER,"password":UNTIS_PASS,"client":"untis-icloud-sync"}})
-    r.raise_for_status()
-    sid=r.json()["result"]["sessionId"]
-    s.headers.update({"Cookie":f"JSESSIONID={sid}; schoolname={UNTIS_SCHOOL}"})
+    url = f"https://{UNTIS_SERVER}/WebUntis/jsonrpc.do?school={UNTIS_SCHOOL}"
+    resp = s.post(url, json={
+        "id": "id", "method": "authenticate", "jsonrpc": "2.0",
+        "params": {"user": UNTIS_USER, "password": UNTIS_PASS, "client": "untis-icloud-sync"}
+    })
+    resp.raise_for_status()
+    data = resp.json()
+    if "result" not in data:
+        # Mehr Debug-Ausgabe, damit wir sehen, was Untis sagt
+        raise RuntimeError(f"Untis-Login fehlgeschlagen: {data.get('error') or data}")
+    sid = data["result"]["sessionId"]
+    s.headers.update({"Cookie": f"JSESSIONID={sid}; schoolname={UNTIS_SCHOOL}"})
     return url
 
 def untis_user(s,url):
