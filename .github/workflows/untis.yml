@@ -1,0 +1,28 @@
+name: Untis → iCloud (5-min)
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests caldav icalendar pytz
+      - name: Sync Untis to iCloud
+        env:
+          UNTIS_SERVER: ${{ secrets.UNTIS_SERVER }}
+          UNTIS_SCHOOL: ${{ secrets.UNTIS_SCHOOL }}
+          UNTIS_USER:   ${{ secrets.UNTIS_USER }}
+          UNTIS_PASS:   ${{ secrets.UNTIS_PASS }}
+          ICLOUD_USER:  ${{ secrets.ICLOUD_USER }}
+          ICLOUD_PASS:  ${{ secrets.ICLOUD_PASS }}
+          ICLOUD_CAL:   "Stundenplan"
+          DAYS_PAST:    "1"
+          DAYS_AHEAD:   "35"
+          DELETE_MISSING: "true"
+          MARK_CANCELLED: "true"
+        run: python untis_to_icloud.py
